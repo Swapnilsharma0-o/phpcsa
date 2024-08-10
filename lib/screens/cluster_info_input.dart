@@ -1,20 +1,20 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:phpcsa/screens/node_discovery_input.dart';
 import 'package:process_run/shell.dart';
-import 'package:yaru/yaru.dart';
 
-class FirstPage extends StatefulWidget {
-  const FirstPage({super.key});
+class ClusterInfoInput extends StatefulWidget {
+  const ClusterInfoInput({super.key});
 
   @override
-  State<FirstPage> createState() => _FirstPageState();
+  State<ClusterInfoInput> createState() => _ClusterInfoInputState();
 }
 
-class _FirstPageState extends State<FirstPage> {
+class _ClusterInfoInputState extends State<ClusterInfoInput> {
   final _form = GlobalKey<FormState>();
-  var _clusterName = TextEditingController();
-  var _clusterDesc = TextEditingController();
+  final _clusterName = TextEditingController();
+  final _clusterDesc = TextEditingController();
   var _cname;
   var _cdesc;
   var shell = Shell();
@@ -30,7 +30,7 @@ class _FirstPageState extends State<FirstPage> {
 
 # Display some text
 echo Hello
-
+ip r
 pwd
 
 ''');
@@ -64,6 +64,11 @@ pwd
         );
       },
     );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const NodeDiscoveryInput()),
+    );
   }
 
   @override
@@ -80,7 +85,7 @@ pwd
               height: 6,
             ),
             Card(
-              margin: EdgeInsets.fromLTRB(400, 0, 400, 0),
+              margin: const EdgeInsets.fromLTRB(400, 0, 400, 0),
               color: Colors.white,
               child: Padding(
                 padding: const EdgeInsets.all(8.0),

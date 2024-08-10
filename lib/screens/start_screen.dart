@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:phpcsa/screens/first_page.dart';
+import 'package:phpcsa/screens/cluster_info_input.dart';
 
 class StartScreen extends StatefulWidget {
   const StartScreen({super.key});
@@ -17,11 +16,11 @@ class _StartScreenState extends State<StartScreen> {
     // TODO: implement initState
     super.initState();
     Timer(
-      Duration(seconds: 5),
+      const Duration(seconds: 5),
       () {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (context) => const FirstPage(),
+            builder: (context) => const ClusterInfoInput(),
           ),
         );
       },
