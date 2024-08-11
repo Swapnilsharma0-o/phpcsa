@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:phpcsa/screens/cluster_info_input.dart';
+import 'package:process_run/shell.dart';
 
 class StartScreen extends StatefulWidget {
   const StartScreen({super.key});
@@ -11,10 +13,12 @@ class StartScreen extends StatefulWidget {
 }
 
 class _StartScreenState extends State<StartScreen> {
+  var _currentUser;
   @override
   void initState() {
     // TODO: implement initState
     super.initState();
+
     Timer(
       const Duration(seconds: 5),
       () {
@@ -44,7 +48,7 @@ class _StartScreenState extends State<StartScreen> {
             const Text(
               textAlign: TextAlign.center,
               'PHPCSA',
-              style: TextStyle(fontWeight: FontWeight.w800,fontSize: 38),
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 38),
             ),
           ],
         ),

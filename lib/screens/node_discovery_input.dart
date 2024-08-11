@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:yaru_icons/yaru_icons.dart';
 
 class NodeDiscoveryInput extends StatefulWidget {
   const NodeDiscoveryInput({super.key});
@@ -9,98 +12,232 @@ class NodeDiscoveryInput extends StatefulWidget {
 
 class _NodeDicoveryInput extends State<NodeDiscoveryInput>
     with SingleTickerProviderStateMixin {
-  late TabController _controller;
+//============================================================================================================all variables here please
+  late TabController _tabController;
   final _maclistinput = TextEditingController();
-  @override
-  void initState() {
-    // TODO: implement initState
-    super.initState();
-    _controller = TabController(length: 2, vsync: this);
+
+  final List<String> _macAddresses = [];
+  late Future<List<String>> macAddresses;
+  final TextEditingController _mac_ip_controller = TextEditingController();
+
+//==============================================manual mac address
+  void _addMacAddress() {
+    final macAddress = _mac_ip_controller.text.trim();
+    if (macAddress.isNotEmpty && !_macAddresses.contains(macAddress)) {
+      setState(() {
+        _macAddresses.add(macAddress);
+      });
+      _mac_ip_controller.clear();
+    }
   }
 
+  Future<void> _saveMacAddressesToFile() async {
+    final file = File('mac_addresses.txt');
+    final content = _macAddresses.join('\n');
+
+    try {
+      await file.writeAsString(content);
+      await Process.run('cat',
+          ['mac_addresses.txt']); // Example command to verify the file contents
+      print('MAC addresses saved to mac_addresses.txt');
+    } catch (e) {
+      print('Error saving MAC addresses: $e');
+    }
+  }
+
+//=========================================================================dynamic for running a temporary dhcp service to get all the mac addresses
+  Future<void> runTemporaryDhcpService() async {
+    final configFile = 'dnsmasq.conf';
+    final logFile = 'dhcp.log';
+    final macFile = 'mac_addresses.txt';
+
+    // Create a minimal dnsmasq configuration
+    final configContent = '''
+  interface=eth0
+  bind-interfaces
+  dhcp-range=192.168.1.2,192.168.1.10,12h
+  log-dhcp
+  ''';
+
+    await File(configFile).writeAsString(configContent);
+
+    // Run dnsmasq with the configuration
+    await Process.run('sudo', [
+      'dnsmasq',
+      '--conf-file=$configFile',
+      '--log-dhcp',
+      '--dhcp-log=$logFile'
+    ]);
+
+    // Wait a few seconds to capture DHCP logs
+    await Future.delayed(Duration(seconds: 10));
+
+    // Stop dnsmasq service
+    await Process.run('sudo', ['pkill', 'dnsmasq']);
+
+    // Extract MAC addresses from the DHCP log
+    final logContent = await File(logFile).readAsString();
+    final macAddresses = _extractMacAddresses(logContent);
+
+    // Save MAC addresses to a file
+    await File(macFile).writeAsString(macAddresses.join('\n'));
+
+    print('MAC addresses saved to $macFile');
+  }
+
+  List<String> _extractMacAddresses(String logContent) {
+    final macAddressRegex = RegExp(r'([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}');
+    final matches = macAddressRegex.allMatches(logContent);
+    return matches.map((match) => match.group(0)!).toSet().toList();
+  }
+
+  Future<List<String>> readMacAddresses() async {
+    final macFile = 'mac_addresses.txt';
+    final file = File(macFile);
+
+    if (await file.exists()) {
+      final content = await file.readAsString();
+      return content.split('\n').where((line) => line.isNotEmpty).toList();
+    } else {
+      return [];
+    }
+  }
+
+//===============================================================================================================TODO: implement initState
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+//====================================================================================================the main build method handel with care
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
     // TODO: implement build
     return Scaffold(
       body: Center(
-        child: Column(
-          children: [
-            Image.asset(
-              'lib/assets/img/tp2.png',
-              width: 600,
+        child: SingleChildScrollView(
+          child: Expanded(
+            child: Column(
+              children: [
+                Image.asset(
+                  'lib/assets/img/tp2.png',
+                  width: 600,
+                ),
+                const SizedBox(
+                  height: 6,
+                ),
+                const Text(
+                  "Node Discovery",
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(
+                  height: 6,
+                ),
+                Container(
+                  width: size.width,
+                  height: size.height,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(400, 0, 400, 0),
+                    child: Column(
+                      children: [
+                        TabBar(
+                          controller:
+                              _tabController, // Provide your TabController here
+                          labelColor: Colors.black,
+                          tabs: [
+                            Tab(
+                                icon: Icon(YaruIcons.graphic_tablet),
+                                text: 'Manual'),
+                            Tab(
+                              icon: Icon(YaruIcons.podcast),
+                              text: 'Dynamic',
+                            ),
+                          ],
+                        ),
+                        Expanded(
+                          child: TabBarView(
+                            controller:
+                                _tabController, // Provide your TabController here as well
+                            children: [
+                              Center(
+                                  child: Column(
+                                children: [
+                                  Text("Enter mac address"),
+                                  TextField(
+                                    controller: _mac_ip_controller,
+                                    decoration: InputDecoration(
+                                      labelText: 'MAC Address',
+                                      suffixIcon: IconButton(
+                                        icon: Icon(Icons.add),
+                                        onPressed: _addMacAddress,
+                                      ),
+                                    ),
+                                    keyboardType: TextInputType.text,
+                                  ),
+                                  SizedBox(height: 20),
+                                  Expanded(
+                                    child: ListView.builder(
+                                      itemCount: _macAddresses.length,
+                                      itemBuilder: (context, index) {
+                                        return ListTile(
+                                          title: Text(_macAddresses[index]),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  SizedBox(height: 20),
+                                  ElevatedButton(
+                                    onPressed: _saveMacAddressesToFile,
+                                    child: Text('Save'),
+                                  ),
+                                ],
+                              )),
+                              Center(
+                                child: Column(
+                                  children: [
+                                    ElevatedButton.icon(
+                                      onPressed: () {},
+                                      label: Text("Discover"),
+                                      icon: Icon(YaruIcons.network_wired),
+                                      
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(
+                          height: 6,
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            ElevatedButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                },
+                                child: const Text("Back")),
+                            SizedBox(
+                              width: 6,
+                            ),
+                            ElevatedButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                },
+                                child: const Text("Next"))
+                          ],
+                        ),
+                        SizedBox(height: 20),
+                      ],
+                    ),
+                  ),
+                )
+              ],
             ),
-            const SizedBox(
-              height: 6,
-            ),
-            ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                child: const Text("back")),
-            const SizedBox(
-              height: 6,
-            ),
-            const Text(
-              "Node Discovery",
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(
-              height: 6,
-            ),
-            // Card(
-            //   margin: const EdgeInsets.fromLTRB(400, 0, 400, 0),
-            //   child: Padding(
-            //     padding: const EdgeInsets.all(8.0),
-            //     child: Column(
-            //       children: [
-            //         TabBar(
-            //           controller: _controller,
-            //           tabs: [
-            //             Tab(
-            //               icon: Icon(Icons.person),
-            //               text: "manual",
-            //             ),
-            //             Tab(
-            //               icon: Icon(Icons.dynamic_feed),
-            //               text: "dynamic",
-            //             ),
-            //           ],
-            //         ),
-            //         TabBarView(
-            //           controller: _controller,
-            //           children: [
-            //             Column(
-            //               children: <Widget>[
-            // //                 const Text(
-            // //                   "Enter Mac address",
-            // //                   textAlign: TextAlign.left,
-            // //                 ),
-            // //                 const SizedBox(
-            // //                   height: 12,
-            // //                 ),
-            // //                 TextField(
-            // //                   decoration: const InputDecoration(
-            // //                     hintText: "Cluster",
-            // //                     fillColor: Colors.white10,
-            // //                     filled: true,
-            // //                   ),
-            // //                   controller: _maclistinput,
-            // //                   keyboardType: TextInputType.multiline,
-            // //                   minLines: 1,
-            // //                   maxLines: 10,
-            // //                 ),
-            // //                 const SizedBox(
-            // //                   height: 12,
-            // //                 ),
-            // //               ],
-            //             )
-            //           ],
-            //         ),
-            //       ],
-            //     ),
-            //   ),
-            // ),
-          ],
+          ),
         ),
       ),
     );
