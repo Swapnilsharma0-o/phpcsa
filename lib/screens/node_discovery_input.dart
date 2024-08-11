@@ -47,6 +47,7 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
 
 //=========================================================================dynamic for running a temporary dhcp service to get all the mac addresses
   Future<void> runTemporaryDhcpService() async {
+    print("inside temporarydhcp function");
     final configFile = 'dnsmasq.conf';
     final logFile = 'dhcp.log';
     final macFile = 'mac_addresses.txt';
@@ -62,6 +63,10 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
     await File(configFile).writeAsString(configContent);
 
     // Run dnsmasq with the configuration
+    await Process.run(
+      'sh',
+      ['-c','cat /var/log/syslog | grep -Ei dhcp > dhcp.log'],
+    );
     await Process.run('sudo', [
       'dnsmasq',
       '--conf-file=$configFile',
@@ -83,6 +88,8 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
     await File(macFile).writeAsString(macAddresses.join('\n'));
 
     print('MAC addresses saved to $macFile');
+
+    readMacAddresses();
   }
 
   List<String> _extractMacAddresses(String logContent) {
@@ -108,6 +115,7 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    macAddresses = readMacAddresses();
   }
 
 //====================================================================================================the main build method handel with care
@@ -162,47 +170,82 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
                                 _tabController, // Provide your TabController here as well
                             children: [
                               Center(
-                                  child: Column(
-                                children: [
-                                  Text("Enter mac address"),
-                                  TextField(
-                                    controller: _mac_ip_controller,
-                                    decoration: InputDecoration(
-                                      labelText: 'MAC Address',
-                                      suffixIcon: IconButton(
-                                        icon: Icon(Icons.add),
-                                        onPressed: _addMacAddress,
+                                child: Column(
+                                  children: [
+                                    Text("Enter mac address"),
+                                    TextField(
+                                      controller: _mac_ip_controller,
+                                      decoration: InputDecoration(
+                                        labelText: 'MAC Address',
+                                        suffixIcon: IconButton(
+                                          icon: Icon(Icons.add),
+                                          onPressed: _addMacAddress,
+                                        ),
+                                      ),
+                                      keyboardType: TextInputType.text,
+                                    ),
+                                    SizedBox(height: 20),
+                                    Expanded(
+                                      child: ListView.builder(
+                                        itemCount: _macAddresses.length,
+                                        itemBuilder: (context, index) {
+                                          return ListTile(
+                                            title: Text(_macAddresses[index]),
+                                          );
+                                        },
                                       ),
                                     ),
-                                    keyboardType: TextInputType.text,
-                                  ),
-                                  SizedBox(height: 20),
-                                  Expanded(
-                                    child: ListView.builder(
-                                      itemCount: _macAddresses.length,
-                                      itemBuilder: (context, index) {
-                                        return ListTile(
-                                          title: Text(_macAddresses[index]),
-                                        );
-                                      },
+                                    SizedBox(height: 20),
+                                    ElevatedButton(
+                                      onPressed: _saveMacAddressesToFile,
+                                      child: Text('Save'),
                                     ),
-                                  ),
-                                  SizedBox(height: 20),
-                                  ElevatedButton(
-                                    onPressed: _saveMacAddressesToFile,
-                                    child: Text('Save'),
-                                  ),
-                                ],
-                              )),
+                                  ],
+                                ),
+                              ),
                               Center(
                                 child: Column(
                                   children: [
-                                    ElevatedButton.icon(
-                                      onPressed: () {},
-                                      label: Text("Discover"),
-                                      icon: Icon(YaruIcons.network_wired),
-                                      
+                                    Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: ElevatedButton.icon(
+                                        onPressed: runTemporaryDhcpService,
+                                        label: Text("Discover"),
+                                        icon: Icon(YaruIcons.network_wired),
+                                      ),
                                     ),
+                                    SingleChildScrollView(
+                                      child: FutureBuilder<List<String>>(
+                                        future: macAddresses,
+                                        builder: (context, snapshot) {
+                                          if (snapshot.connectionState ==
+                                              ConnectionState.waiting) {
+                                            return Center(
+                                                child:
+                                                    CircularProgressIndicator());
+                                          } else if (snapshot.hasError) {
+                                            return Center(
+                                                child: Text(
+                                                    'Error: ${snapshot.error}'));
+                                          } else if (!snapshot.hasData ||
+                                              snapshot.data!.isEmpty) {
+                                            return Center(
+                                                child: Text(
+                                                    'No MAC addresses found.'));
+                                          } else {
+                                            final macList = snapshot.data!;
+                                            return ListView.builder(
+                                              itemCount: macList.length,
+                                              itemBuilder: (context, index) {
+                                                return ListTile(
+                                                  title: Text(macList[index]),
+                                                );
+                                              },
+                                            );
+                                          }
+                                        },
+                                      ),
+                                    )
                                   ],
                                 ),
                               ),
