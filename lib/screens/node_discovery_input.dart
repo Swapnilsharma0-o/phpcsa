@@ -116,10 +116,9 @@ subnet 192.168.253.0 netmask 255.255.255.0 {
         _selectedInterface.toString()
       ],
     );
-    
 
     // Wait a few seconds to capture DHCP logs
-    await Future.delayed(Duration(seconds: 10));
+    await Future.delayed(Duration(seconds: 100));
 
     // Stop dhcpd service
     await Process.run('sudo', ['pkill', 'dhcpd']);
