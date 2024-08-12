@@ -18,7 +18,45 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
 
   final List<String> _macAddresses = [];
   late Future<List<String>> macAddresses;
+  List<String> _interfaces = [];
+  String? _selectedInterface;
   final TextEditingController _mac_ip_controller = TextEditingController();
+
+//=============================================================================================fetch interfaces
+  Future<List<String>> getNetworkInterfaces() async {
+    try {
+      print("inside getnetworkinterfaces");
+      // Run the 'ip -br addr' command to list network interfaces
+      final result = await Process.run('ip', ['-br', 'addr']);
+      if (result.exitCode == 0) {
+        // Process the output to extract interface names
+        final output = result.stdout as String;
+        final lines = output.split('\n');
+        // Extract the interface name from each line
+        return lines
+            .where((line) => line.isNotEmpty)
+            .map((line) => line.split(' ').first)
+            .toList();
+      } else {
+        throw Exception('Failed to fetch network interfaces');
+      }
+    } catch (e) {
+      print('Error fetching network interfaces: $e');
+      return [];
+    }
+  }
+
+//==================================================================load interfaces
+  Future<void> _loadNetworkInterfaces() async {
+    print("inside load network interface");
+    final interfaces = await getNetworkInterfaces();
+    setState(() {
+      _interfaces = interfaces;
+      if (_interfaces.isNotEmpty) {
+        _selectedInterface = _interfaces[0];
+      }
+    });
+  }
 
 //==============================================manual mac address
   void _addMacAddress() {
@@ -48,37 +86,47 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
 //=========================================================================dynamic for running a temporary dhcp service to get all the mac addresses
   Future<void> runTemporaryDhcpService() async {
     print("inside temporarydhcp function");
-    final configFile = 'dnsmasq.conf';
+    final configFile = 'dhcpd.conf';
     final logFile = 'dhcp.log';
     final macFile = 'mac_addresses.txt';
 
-    // Create a minimal dnsmasq configuration
+    // Create a minimal dhcpd configuration
     final configContent = '''
-  interface=eth0
-  bind-interfaces
-  dhcp-range=192.168.1.2,192.168.1.10,12h
-  log-dhcp
-  ''';
+default-lease-time 600;
+max-lease-time 7200;
+log-facility local7;
+
+subnet 192.168.253.0 netmask 255.255.255.0 {
+  range 192.168.253.2 192.168.253.10;
+  option routers 192.168.253.1;
+}
+''';
 
     await File(configFile).writeAsString(configContent);
 
-    // Run dnsmasq with the configuration
-    await Process.run(
-      'sh',
-      ['-c','cat /var/log/syslog | grep -Ei dhcp > dhcp.log'],
+    // Run dhcpd with the configuration on interface ens33
+    final process = await Process.start(
+      'sudo',
+      [
+        'dhcpd',
+        '-cf',
+        configFile,
+        '-lf',
+        logFile,
+        _selectedInterface.toString()
+      ],
     );
-    await Process.run('sudo', [
-      'dnsmasq',
-      '--conf-file=$configFile',
-      '--log-dhcp',
-      '--dhcp-log=$logFile'
-    ]);
+    
 
     // Wait a few seconds to capture DHCP logs
     await Future.delayed(Duration(seconds: 10));
 
-    // Stop dnsmasq service
-    await Process.run('sudo', ['pkill', 'dnsmasq']);
+    // Stop dhcpd service
+    await Process.run('sudo', ['pkill', 'dhcpd']);
+    await Process.run(
+      'sh',
+      ['-c', 'cat /var/log/syslog | grep -Ei dhcp > dhcp.log'],
+    );
 
     // Extract MAC addresses from the DHCP log
     final logContent = await File(logFile).readAsString();
@@ -115,6 +163,7 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadNetworkInterfaces();
     macAddresses = readMacAddresses();
   }
 
@@ -143,6 +192,26 @@ class _NodeDicoveryInput extends State<NodeDiscoveryInput>
                 const SizedBox(
                   height: 6,
                 ),
+                Center(
+                  child: _interfaces.isEmpty
+                      ? CircularProgressIndicator()
+                      : DropdownButton<String>(
+                          value: _selectedInterface,
+                          onChanged: (String? newValue) {
+                            setState(() {
+                              _selectedInterface = newValue;
+                            });
+                          },
+                          items: _interfaces
+                              .map<DropdownMenuItem<String>>((String value) {
+                            return DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            );
+                          }).toList(),
+                        ),
+                ),
+                SizedBox(height: 6),
                 Container(
                   width: size.width,
                   height: size.height,
