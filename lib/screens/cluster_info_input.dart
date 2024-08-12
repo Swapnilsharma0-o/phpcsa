@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
 import 'package:phpcsa/screens/node_discovery_input.dart';
 import 'package:process_run/shell.dart';
 import 'package:process_run/stdio.dart';
@@ -59,7 +60,10 @@ pwd
     _cname = _clusterName.text;
     _cdesc = _clusterDesc.text;
 
-    Process.run('sh',['-c', 'echo "name:$_cname\ndecription:$_cdesc" > cluster_info.txt'],);
+    Process.run(
+      'sh',
+      ['-c', 'echo "name:$_cname\ndecription:$_cdesc" > cluster_info.txt'],
+    );
 
     showDialog(
       context: context,
