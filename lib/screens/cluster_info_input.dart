@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:phpcsa/screens/iso_selector.dart';
 
 import 'package:phpcsa/screens/node_discovery_input.dart';
 import 'package:process_run/shell.dart';
@@ -79,7 +80,7 @@ pwd
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const NodeDiscoveryInput()),
+      MaterialPageRoute(builder: (context) => const IsoSelector()),
     );
   }
 
