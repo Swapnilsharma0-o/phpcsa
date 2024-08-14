@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:phpcsa/screens/inventory_setup_screen.dart';
 import 'package:process_run/process_run.dart';
 
 class PXESetupScreen extends StatefulWidget {
@@ -85,18 +86,18 @@ class _PXESetupScreenState extends State<PXESetupScreen> {
     });
 
     try {
-      await Process.run('sudo',
-          ['ip', 'addr', 'flush', 'dev', _selectedInterface.toString()]);
+      await Process.run(
+          'sudo', ['ip', 'addr', 'flush', 'dev', _selectedInterface!]);
       await Process.run('sudo', [
         'ip',
         'addr',
         'add',
         '$ipAddress/$subnet',
         'dev',
-        _selectedInterface.toString()
+        _selectedInterface!
       ]);
       await Process.run(
-          'sudo', ['ip', 'link', 'set', _selectedInterface.toString(), 'up']);
+          'sudo', ['ip', 'link', 'set', _selectedInterface!, 'up']);
       await Process.run('sudo', ['systemctl', 'restart', 'networking']);
 
       setState(() {
@@ -155,7 +156,8 @@ logvol swap --fstype="swap" --size=4096 --name=swap --vgname=VolGroup
       final kickstartFile = File('/tmp/kickstart.cfg');
       await kickstartFile.writeAsString(kickstartContent);
       setState(() {
-        _output = 'Kickstart file written successfully to /tmp/kickstart.cfg.\n';
+        _output =
+            'Kickstart file written successfully to /tmp/kickstart.cfg.\n';
       });
     } catch (e) {
       setState(() {
@@ -177,8 +179,6 @@ logvol swap --fstype="swap" --size=4096 --name=swap --vgname=VolGroup
       return;
     }
 
-    final initialDirectory = Directory.current.path;
-
     setState(() {
       _isRunning = true;
       _progress = 0.1;
@@ -187,7 +187,6 @@ logvol swap --fstype="swap" --size=4096 --name=swap --vgname=VolGroup
 
     await _writeKickstartFile();
 
-    // PXE setup script
     final script = '''
 #!/bin/bash
 
@@ -214,15 +213,15 @@ sudo apt-get update && sudo apt-get install -y isc-dhcp-server xinetd syslinux-c
 echo "Packages installed."
 
 echo "Copying pxelinux.0..."
-sudo rm -r /var/lib/tftpboot/pxelinux.0
+sudo rm -f /var/lib/tftpboot/pxelinux.0
 sudo cp /usr/lib/PXELINUX/pxelinux.0 /var/lib/tftpboot/ || error_exit "Failed to copy pxelinux.0"
 echo "pxelinux.0 copied."
 
-echo "copy kickstarter"
-mkdir /var/www/html/ks
+echo "Copying kickstart file..."
+mkdir -p /var/www/html/ks
 sudo cp /tmp/kickstart.cfg /var/www/html/ks/kickstart.cfg
 sudo chmod 644 /var/www/html/ks/kickstart.cfg
-echo "copied ks to custom"
+echo "Kickstart file copied."
 
 echo "Configuring DHCP server..."
 echo "subnet 192.168.253.0 netmask 255.255.255.0 {
@@ -268,10 +267,16 @@ LABEL Install Custom ISO
 sudo systemctl restart xinetd || error_exit "TFTP server configuration failed"
 echo "TFTP server configured."
 
-echo "Mounting ISO file..."
+echo "Mounting ISO and copying files..."
 sudo mkdir -p \$ISO_MOUNT_DIR
-sudo mount -o loop \$ISO_FILE \$ISO_MOUNT_DIR || error_exit "ISO mounting failed"
-echo "ISO mounted."
+sudo mount -o loop "\$ISO_FILE" \$ISO_MOUNT_DIR || error_exit "ISO mounting failed"
+sudo mkdir -p \$TFTP_ROOT/custom
+sudo cp -r \$ISO_MOUNT_DIR/* /var/lib/tftpboot/custom/
+sudo mkdir -p \$TFTP_ROOT/custom/images/pxeboot
+sudo cp \$ISO_MOUNT_DIR/isolinux/vmlinuz /var/lib/tftpboot/custom/images/pxeboot/
+sudo cp \$ISO_MOUNT_DIR/isolinux/initrd.img /var/lib/tftpboot/custom/images/pxeboot/
+
+echo "Files copied."
 
 echo "Copying ISO contents to HTTP directory..."
 sudo mkdir -p \$PXE_HTTP_DIR
@@ -284,6 +289,23 @@ sudo cp /tmp/kickstart.cfg \$PXE_HTTP_DIR/custom/kickstart.cfg
 sudo chmod 755 \$PXE_HTTP_DIR/custom/kickstart.cfg
 sudo systemctl restart apache2 || error_exit "Apache server restart failed"
 echo "ISO contents copied and served via HTTP."
+
+echo "Configuring Apache..."
+echo "Alias /custom \$PXE_HTTP_DIR
+<Directory \$PXE_HTTP_DIR>
+    Options Indexes FollowSymLinks
+    Require ip \$MASTER_IP 192.168.253.0/24
+</Directory>" | sudo tee /etc/apache2/pxeboot.conf > /dev/null
+sudo a2enconf pxeboot
+sudo systemctl reload apache2 || error_exit "Apache configuration failed"
+echo "Apache configured."
+
+echo "Setting root password..."
+echo "root:\$ROOT_PASSWORD" | sudo chpasswd || error_exit "Setting root password failed"
+echo "Root password set."
+
+echo "Updating /etc/hosts with provisioned nodes..."
+echo "\$MASTER_IP    pxe-master" | sudo tee -a \$HOSTS_FILE > /dev/null
 
 # Cleanup
 sudo umount \$ISO_MOUNT_DIR
@@ -380,16 +402,37 @@ echo "PXE setup complete. Clients can now boot from the network."
                   : const Text('Run PXE Setup'),
             ),
             const SizedBox(height: 20),
-            if (_isoFilePath != null)
-              Text('Selected ISO File: $_isoFilePath'),
+            if (_isoFilePath != null) Text('Selected ISO File: $_isoFilePath'),
             const SizedBox(height: 20),
             if (_output.isNotEmpty)
               Text(
                 'Output:\n$_output',
                 style: const TextStyle(color: Colors.green),
               ),
-            if (_progress > 0.0)
-              LinearProgressIndicator(value: _progress),
+            if (_progress > 0.0) LinearProgressIndicator(value: _progress),
+            Row(
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  child: Text('back'),
+                ),
+                SizedBox(
+                  width: 12,
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const InventorySetupScreen()),
+                    );
+                  },
+                  child: Text('next'),
+                )
+              ],
+            )
           ],
         ),
       ),
