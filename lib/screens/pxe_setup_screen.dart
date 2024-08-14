@@ -18,7 +18,6 @@ class _PXESetupScreenState extends State<PXESetupScreen> {
   double _progress = 0.0;
   bool _isRunning = false;
   List<String> _interfaces = [];
-  List<String> _provisionedNodes = [];
   final TextEditingController _ipController = TextEditingController();
 
   @override
@@ -112,26 +111,58 @@ class _PXESetupScreenState extends State<PXESetupScreen> {
     }
   }
 
-  Future<void> _writePXEBootConf() async {
-    final pxebootConf = '''
-Alias /custom /var/pxe/custom
-<Directory /var/pxe/custom>
-    Options Indexes FollowSymLinks
-    Require ip $_masterIP 192.168.253.0/24
-</Directory>
+  Future<void> _writeKickstartFile() async {
+    const kickstartContent = '''
+# create new
+install
+# automatically proceed for each steps
+autostep
+# reboot after installing
+reboot
+# encrypt algorithm
+auth --enableshadow --passalgo=sha512
+# installation source
+url --url=http://192.168.253.60/custom/
+# install disk
+ignoredisk --only-use=sda
+# keyboard layouts
+keyboard --vckeymap=jp106 --xlayouts='jp','us'
+# system locale
+lang en_US.UTF-8
+# network settings
+network --bootproto=dhcp --ipv6=auto --activate --hostname=localhost
+# root password you generated above
+rootpw --iscrypted \$6\$8mRjhFsCoiyulUFV\$IlsqapFjs3fsYlWqoJZ1dnkInU4ozoUXNWye2p.XHG71fLOx8S.bpzRKV2rHfEOKugaYDTtf5aXv.lucdzVuE.
+# timezone
+timezone Asia/Tokyo --isUtc --nontp
+# bootloader's settings
+bootloader --location=mbr --boot-drive=sda
+# initialize all partition tables
+zerombr
+clearpart --all --initlabel
+# partitioning
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part pv.10 --fstype="lvmpv" --ondisk=sda --size=51200
+volgroup VolGroup --pesize=4096 pv.10
+logvol / --fstype="xfs" --size=20480 --name=root --vgname=VolGroup
+logvol swap --fstype="swap" --size=4096 --name=swap --vgname=VolGroup
+%packages
+@core
+%end
 ''';
 
     try {
-      await Process.run(
-        'sudo',
-        ['sh', '-c', 'echo "$pxebootConf" > /etc/apache2/pxeboot.conf']
-      );
-      await Process.run('sudo', ['a2enconf', 'pxeboot']);
-      await Process.run('sudo', ['systemctl', 'reload', 'apache2']);
+      final kickstartFile = File('/tmp/kickstart.cfg');
+      await kickstartFile.writeAsString(kickstartContent);
+      setState(() {
+        _output = 'Kickstart file written successfully to /tmp/kickstart.cfg.\n';
+      });
     } catch (e) {
       setState(() {
-        _output = 'Error configuring Apache: $e';
+        _output = 'Error writing Kickstart file: $e';
       });
+      _isRunning = false;
+      return;
     }
   }
 
@@ -154,6 +185,9 @@ Alias /custom /var/pxe/custom
       _output = 'Starting PXE Setup...\n';
     });
 
+    await _writeKickstartFile();
+
+    // PXE setup script
     final script = '''
 #!/bin/bash
 
@@ -176,12 +210,19 @@ error_exit() {
 echo "INTERFACESv4=\"\$INTERFACE\"" | sudo tee /etc/default/isc-dhcp-server > /dev/null
 
 echo "Updating package list and installing necessary packages..."
-sudo apt-get update && sudo apt-get install -y isc-dhcp-server xinetd syslinux-common apache2 pxelinux|| error_exit "Package installation failed"
+sudo apt-get update && sudo apt-get install -y isc-dhcp-server xinetd syslinux-common apache2 pxelinux || error_exit "Package installation failed"
 echo "Packages installed."
 
 echo "Copying pxelinux.0..."
+sudo rm -r /var/lib/tftpboot/pxelinux.0
 sudo cp /usr/lib/PXELINUX/pxelinux.0 /var/lib/tftpboot/ || error_exit "Failed to copy pxelinux.0"
 echo "pxelinux.0 copied."
+
+echo "copy kickstarter"
+mkdir /var/www/html/ks
+sudo cp /tmp/kickstart.cfg /var/www/html/ks/kickstart.cfg
+sudo chmod 644 /var/www/html/ks/kickstart.cfg
+echo "copied ks to custom"
 
 echo "Configuring DHCP server..."
 echo "subnet 192.168.253.0 netmask 255.255.255.0 {
@@ -222,138 +263,133 @@ MENU TITLE PXE Boot Menu
 LABEL Install Custom ISO
     MENU LABEL ^Install Custom ISO
     KERNEL /custom/images/pxeboot/vmlinuz
-    APPEND initrd=custom/images/pxeboot/initrd.img method=http://\$MASTER_IP/custom devfs=nomount
+    APPEND initrd=custom/images/pxeboot/initrd.img method=http://\$MASTER_IP/custom devfs=nomount ks=http://\$MASTER_IP/ks/kickstart.cfg
 " | sudo tee \$TFTP_ROOT/pxelinux.cfg/default > /dev/null
-sudo systemctl restart xinetd || error_exit "TFTP configuration failed"
+sudo systemctl restart xinetd || error_exit "TFTP server configuration failed"
 echo "TFTP server configured."
 
-echo "Mounting ISO and copying files..."
+echo "Mounting ISO file..."
 sudo mkdir -p \$ISO_MOUNT_DIR
-sudo mount -o loop "\$ISO_FILE" \$ISO_MOUNT_DIR || error_exit "ISO mounting failed"
+sudo mount -o loop \$ISO_FILE \$ISO_MOUNT_DIR || error_exit "ISO mounting failed"
+echo "ISO mounted."
+
+echo "Copying ISO contents to HTTP directory..."
 sudo mkdir -p \$PXE_HTTP_DIR
-sudo cp -r \$ISO_MOUNT_DIR/* \$PXE_HTTP_DIR/
-sudo mkdir -p \$TFTP_ROOT/custom/images/pxeboot
-sudo cp \$ISO_MOUNT_DIR/isolinux/vmlinuz \$TFTP_ROOT/custom/images/pxeboot/
-sudo cp \$ISO_MOUNT_DIR/isolinux/initrd.img \$TFTP_ROOT/custom/images/pxeboot/
-sudo umount \$ISO_MOUNT_DIR || error_exit "ISO unmounting failed"
-echo "Files copied."
+sudo cp -rT \$ISO_MOUNT_DIR \$PXE_HTTP_DIR || error_exit "Failed to copy ISO contents"
+sudo chmod -R 755 \$PXE_HTTP_DIR
+sudo mkdir -p \$PXE_HTTP_DIR/pxeboot
+sudo cp -rT \$ISO_MOUNT_DIR/isolinux \$PXE_HTTP_DIR/pxeboot
+sudo cp -rT \$ISO_MOUNT_DIR/images/pxeboot \$PXE_HTTP_DIR/custom/images/pxeboot
+sudo cp /tmp/kickstart.cfg \$PXE_HTTP_DIR/custom/kickstart.cfg
+sudo chmod 755 \$PXE_HTTP_DIR/custom/kickstart.cfg
+sudo systemctl restart apache2 || error_exit "Apache server restart failed"
+echo "ISO contents copied and served via HTTP."
 
-echo "Configuring Apache..."
-echo "Alias /custom \$PXE_HTTP_DIR
-<Directory \$PXE_HTTP_DIR>
-    Options Indexes FollowSymLinks
-    Require ip \$MASTER_IP 192.168.253.0/24
-</Directory>" | sudo tee /etc/apache2/pxeboot.conf > /dev/null
-sudo a2enconf pxeboot
-sudo systemctl reload apache2 || error_exit "Apache configuration failed"
-echo "Apache configured."
+# Cleanup
+sudo umount \$ISO_MOUNT_DIR
 
-echo "Setting root password..."
-echo "root:\$ROOT_PASSWORD" | sudo chpasswd || error_exit "Setting root password failed"
-echo "Root password set."
-
-echo "Updating /etc/hosts with provisioned nodes..."
-echo "\$MASTER_IP    pxe-master" | sudo tee -a \$HOSTS_FILE > /dev/null
-
-echo "PXE provisioning setup is complete."
+echo "PXE setup complete. Clients can now boot from the network."
 ''';
 
+    // Write script to a temporary file
+    final scriptFile = File('/tmp/pxe_setup.sh');
+    await scriptFile.writeAsString(script);
+
     try {
-      // Change to the root directory
-      Directory.current = Directory('/');
-
-      final result = await Process.run(
-        'bash',
-        ['-c', script],
-      );
-
-      // Process output
+      // Run the script
+      await Process.run('sudo', ['bash', scriptFile.path]);
       setState(() {
-        _output = result.stdout;
-        if (result.stderr.isNotEmpty) {
-          _output += '\nError: ${result.stderr}';
-        }
+        _output += 'PXE setup completed successfully.\n';
         _progress = 1.0;
-        _isRunning = false;
       });
     } catch (e) {
       setState(() {
-        _output = 'Error running PXE setup: $e';
-        _progress = 0.0;
-        _isRunning = false;
+        _output += 'Error running PXE setup: $e\n';
       });
     } finally {
-      // Restore the initial directory
-      Directory.current = Directory(initialDirectory);
+      setState(() {
+        _isRunning = false;
+        _progress = 0.0;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('PXE Setup')),
+      appBar: AppBar(
+        title: const Text('PXE Setup'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<String>(
-              decoration:
-                  const InputDecoration(labelText: 'Select Network Interface'),
-              items: _interfaces.map((String interface) {
-                return DropdownMenuItem<String>(
-                  value: interface,
-                  child: Text(interface),
-                );
-              }).toList(),
+            const Text(
+              'Select Network Interface:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            DropdownButton<String>(
+              value: _selectedInterface,
+              hint: const Text('Select an interface'),
               onChanged: (String? newValue) {
                 setState(() {
                   _selectedInterface = newValue;
                 });
               },
-              value: _selectedInterface,
+              items: _interfaces.map<DropdownMenuItem<String>>((String value) {
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(value),
+                );
+              }).toList(),
             ),
-            TextFormField(
-              decoration: const InputDecoration(labelText: 'Enter Master IP'),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _ipController,
+              decoration: const InputDecoration(
+                labelText: 'IP/Subnet (e.g., 192.168.1.10/24)',
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              decoration: const InputDecoration(
+                labelText: 'Master IP (for PXE Server)',
+              ),
               onChanged: (value) {
                 setState(() {
                   _masterIP = value;
                 });
               },
             ),
-            TextFormField(
-              controller: _ipController,
-              decoration: const InputDecoration(
-                  labelText: 'Enter IP/Subnet (e.g., 192.168.1.10/24)'),
-            ),
-            ElevatedButton(
-              onPressed: _assignIP,
-              child: const Text('Assign IP to Interface'),
-            ),
+            const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _pickISOFile,
               child: const Text('Pick ISO File'),
             ),
-            if (_isoFilePath != null) Text('Selected ISO: $_isoFilePath'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _assignIP,
+              child: const Text('Assign IP'),
+            ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _isRunning ? null : _runPXESetup,
-              child: const Text('Run PXE Setup'),
+              child: _isRunning
+                  ? const CircularProgressIndicator()
+                  : const Text('Run PXE Setup'),
             ),
             const SizedBox(height: 20),
-            LinearProgressIndicator(value: _progress),
+            if (_isoFilePath != null)
+              Text('Selected ISO File: $_isoFilePath'),
             const SizedBox(height: 20),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Text(_output),
+            if (_output.isNotEmpty)
+              Text(
+                'Output:\n$_output',
+                style: const TextStyle(color: Colors.green),
               ),
-            ),
-            if (_provisionedNodes.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              const Text('Provisioned Nodes:',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              ..._provisionedNodes.map((node) => Text(node)).toList(),
-            ],
+            if (_progress > 0.0)
+              LinearProgressIndicator(value: _progress),
           ],
         ),
       ),
