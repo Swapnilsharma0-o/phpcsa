@@ -12,9 +12,28 @@ class InventorySetupScreen extends StatefulWidget {
 }
 
 class _InventorySetupScreenState extends State<InventorySetupScreen> {
+  
   String? _inventoryFilePath;
   bool _isRunning = false;
+  var _currentUser;
   String _output = '';
+  var shell = Shell();
+  fuser() async {
+    final result = await shell.run('whoami');
+
+    _currentUser = result.isNotEmpty ? result.first.stdout.trim() : '';
+
+    // _currentUser = await shell
+    //     .run('whoami')
+    //     .then((results) => results.map((r) => r.stdout.trim()).join('\n'));
+  }
+
+  @override
+  initState() {
+    // TODO: implement initState
+    super.initState();
+    fuser();
+  }
 
   Future<void> _installAnsible() async {
     setState(() {
@@ -28,7 +47,8 @@ class _InventorySetupScreenState extends State<InventorySetupScreen> {
       await Process.run('sudo', ['apt-get', 'install', '-y', 'ansible']);
 
       // Create directories
-      final playbookDir = Directory('/home/`whoami`/phpcsa/cluster/playbooks');
+      final playbookDir =
+          Directory('/home/${_currentUser}/phpcsa/cluster/playbooks');
       if (!await playbookDir.exists()) {
         await playbookDir.create(recursive: true);
       }

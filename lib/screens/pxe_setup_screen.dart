@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:phpcsa/screens/inventory_setup_screen.dart';
 import 'package:process_run/process_run.dart';
+import 'package:intl/intl.dart';
 
 class PXESetupScreen extends StatefulWidget {
   const PXESetupScreen({Key? key}) : super(key: key);
@@ -18,13 +19,83 @@ class _PXESetupScreenState extends State<PXESetupScreen> {
   String _output = '';
   double _progress = 0.0;
   bool _isRunning = false;
+  var _currentUser;
   List<String> _interfaces = [];
   final TextEditingController _ipController = TextEditingController();
+
+  var shell = Shell();
+  fuser() async {
+    final result = await shell.run('whoami');
+
+    _currentUser = result.isNotEmpty ? result.first.stdout.trim() : '';
+
+    // _currentUser = await shell
+    //     .run('whoami')
+    //     .then((results) => results.map((r) => r.stdout.trim()).join('\n'));
+  }
 
   @override
   void initState() {
     super.initState();
+    fuser();
     _fetchInterfaces();
+  }
+
+  Future<void> fetchAndStoreLatestAssignedIPs(String _currentuser) async {
+    final String leaseFilePath = '/var/lib/dhcp/dhcpd.leases';
+    final File leaseFile = File(leaseFilePath);
+    final String outputFilePath = '/home/$_currentuser/phpcsa/cluster/iphost';
+    final File outputFile = File(outputFilePath);
+
+    if (!await leaseFile.exists()) {
+      print('DHCP lease file not found.');
+      return;
+    }
+
+    final List<String> fileLines = await leaseFile.readAsLines();
+    final Map<String, String> uniqueLeases = {};
+    DateTime? latestStartTime;
+    Map<String, dynamic> currentLease = {};
+
+    final DateFormat leaseDateFormat = DateFormat('yyyy/MM/dd HH:mm:ss');
+
+    for (String line in fileLines) {
+      line = line.trim();
+
+      if (line.startsWith('lease')) {
+        // Start a new lease block, reset currentLease
+        currentLease = {'ip': line.split(' ')[1]};
+      } else if (line.startsWith('starts')) {
+        String dateStr = line.split(' ')[2];
+        String timeStr = line.split(' ')[3].replaceAll(';', '');
+
+        // Convert the lease date and time to a DateTime object
+        try {
+          DateTime startTime = leaseDateFormat.parse('$dateStr $timeStr');
+
+          if (latestStartTime == null || startTime.isAfter(latestStartTime)) {
+            latestStartTime = startTime;
+            uniqueLeases
+                .clear(); // Clear previous entries as a new latest start time is found
+            uniqueLeases[currentLease['ip']] = currentLease['ip'];
+          } else if (startTime.isAtSameMomentAs(latestStartTime)) {
+            uniqueLeases[currentLease['ip']] = currentLease['ip'];
+          }
+        } catch (e) {
+          print('Error parsing date: $e');
+        }
+      }
+    }
+
+    // Ensure the directory exists
+    await Directory('/home/$_currentuser/phpcsa/cluster')
+        .create(recursive: true);
+
+    // Write the latest unique IPs to the output file
+    await outputFile.writeAsString(uniqueLeases.values.join('\n'));
+
+    print(
+        'Unique IPs from the latest leases have been stored in $outputFilePath');
   }
 
   Future<void> _fetchInterfaces() async {
@@ -422,7 +493,8 @@ echo "PXE setup complete. Clients can now boot from the network."
                   width: 12,
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
+                    await fetchAndStoreLatestAssignedIPs(_currentUser);
                     Navigator.push(
                       context,
                       MaterialPageRoute(
