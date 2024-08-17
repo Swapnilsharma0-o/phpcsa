@@ -1,0 +1,111 @@
+- name: Install Nagios on Rocky Linux
+  hosts: nagios_servers
+  become: yes
+
+  vars:
+    nagios_user: nagios
+    nagios_group: nagios
+    nagios_password: "123456"
+    nagios_version: 4.4.6
+    nagios_url: "https://assets.nagios.com/downloads/nagioscore/releases/nagios-{{ nagios_version }}.tar.gz"
+    plugins_version: 2.2.1
+    plugins_url: "https://nagios-plugins.org/download/nagios-plugins-{{ plugins_version }}.tar.gz"
+
+  tasks:
+    - name: Install Required Packages
+      dnf:
+        name: "{{ packages }}"
+        state: present
+      vars:
+        packages:
+          - httpd
+          - php
+          - gcc
+          - glibc
+          - glibc-common
+          - gd
+          - gd-devel
+          - make
+          - net-snmp
+          - unzip
+          - wget
+          - openssl
+          - openssl-devel
+
+    - name: Create Nagios Group
+      group:
+        name: "{{ nagios_group }}"
+        state: present
+
+    - name: Create Nagios User
+      user:
+        name: "{{ nagios_user }}"
+        group: "{{ nagios_group }}"
+        createhome: yes
+        shell: /bin/bash
+        password: "{{ nagios_password | password_hash('sha512', 'passlib') }}"
+
+    - name: Download Nagios
+      get_url:
+        url: "{{ nagios_url }}"
+        dest: /tmp/nagios.tar.gz
+
+    - name: Extract Nagios
+      unarchive:
+        src: /tmp/nagios.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Compile and Install Nagios
+      shell: |
+        cd /tmp/nagios-{{ nagios_version }}
+        ./configure --with-command-group={{ nagios_group }}
+        make all
+        make install
+        make install-init
+        make install-config
+        make install-commandmode
+        make install-webconf
+        htpasswd -b -c /usr/local/nagios/etc/htpasswd.users nagiosadmin {{ nagios_password }}
+        systemctl enable nagios
+
+    - name: Download Nagios Plugins
+      get_url:
+        url: "{{ plugins_url }}"
+        dest: /tmp/nagios-plugins.tar.gz
+
+    - name: Extract Nagios Plugins
+      unarchive:
+        src: /tmp/nagios-plugins.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Compile and Install Nagios Plugins
+      shell: |
+        cd /tmp/nagios-plugins-{{ plugins_version }}
+        ./configure --with-nagios-user={{ nagios_user }} --with-nagios-group={{ nagios_group }}
+        make
+        make install
+
+    - name: Start Apache and Nagios Services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - httpd
+        - nagios
+
+    - name: Allow HTTP Traffic
+      firewalld:
+        port: 80/tcp
+        permanent: true
+        state: enabled
+      notify:
+        - Reload firewalld
+
+  handlers:
+    - name: Reload firewalld
+      systemd:
+        name: firewalld
+

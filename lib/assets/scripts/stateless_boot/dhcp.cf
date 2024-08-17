@@ -1,0 +1,16 @@
+
+
+# A slightly different configuration for an internal subnet.
+subnet ip_network netmask network_mask {
+  range start_ip endip;
+  option domain-name-servers master.example.org;
+  option domain-name "master.example.org";
+  option routers gatewayip;
+  option broadcast-address broadcastip;
+  default-lease-time 600;
+  max-lease-time 7200;
+
+	filename "pxelinux.0";
+	next-server hostonlyip;
+}
+

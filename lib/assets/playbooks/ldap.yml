@@ -1,0 +1,76 @@
+---
+- hosts: localhost
+  become: yes
+  connection: local  # Ensures tasks run locally on the control node
+  tasks:
+    - name: Install LDAP server packages on Ubuntu Master
+      apt:
+        name:
+          - slapd
+          - ldap-utils
+        state: present
+        update_cache: yes
+
+    - name: Reconfigure slapd (non-interactive) on Ubuntu Master
+      debconf:
+        name: slapd
+        question: "{{ item.question }}"
+        value: "{{ item.value }}"
+        vtype: "{{ item.vtype }}"
+      with_items:
+        - { question: "slapd/no_configuration", value: "false", vtype: "select" }
+        - { question: "slapd/password1", value: "admin_password", vtype: "password" }
+        - { question: "slapd/password2", value: "admin_password", vtype: "password" }
+        - { question: "slapd/domain", value: "example.com", vtype: "string" }
+        - { question: "slapd/organization", value: "Example Organization", vtype: "string" }
+      notify: Restart slapd
+
+    - name: Ensure slapd service is enabled and running on Ubuntu Master
+      service:
+        name: slapd
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart slapd
+      service:
+        name: slapd
+        state: restarted
+
+- hosts: ldap_client
+  become: yes
+  tasks:
+    - name: Install LDAP client packages on CentOS Client
+      yum:
+        name:
+          - openldap-clients
+          - nss-pam-ldapd
+        state: present
+
+    - name: Configure LDAP client to use the Ubuntu Master
+      blockinfile:
+        path: /etc/nslcd.conf
+        block: |
+          uri ldap://{{ hostvars['localhost']['ansible_facts']['default_ipv4']['address'] }}/
+          base dc=example,dc=com
+          binddn cn=Manager,dc=example,dc=com
+          bindpw admin_password
+
+    - name: Update nsswitch.conf to use LDAP on CentOS Client
+      lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: '^(passwd|group|shadow):'
+        line: '\1: files ldap'
+        backup: yes
+
+    - name: Start and enable nslcd and nscd services on CentOS Client
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - nslcd
+        - nscd
+      ignore_errors: yes  # Ignore errors if the service does not exist        
+
+

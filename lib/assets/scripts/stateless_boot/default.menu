@@ -1,0 +1,5 @@
+default centos7
+
+label centos7
+    kernel centos7/vmlinuz
+    append initrd=centos7/initrd.img root=nfs:192.168.253.128:/var/lib/tftpboot/centos7/root rw selinux=0 

@@ -1,0 +1,29 @@
+# Add a default gateway
+route add default gw 192.168.253.128 ens33
+
+# Display routing table
+route -n
+
+# Resolve domain names
+nslookup google.com
+nslookup yahoo.com
+
+# Trace the path to a remote IP address
+tracepath 142.250.195.14
+
+# Test connectivity to a domain
+curl google.com
+
+# Test connectivity to a specific IP address
+curl 142.251.42.14
+wget 142.251.42.14
+
+# Edit host file for static IP to hostname mapping
+vi /etc/hosts
+
+# Check DNS resolver configuration
+vi /etc/resolv.conf
+
+# View content of a file
+less index.html
+

@@ -1,0 +1,21 @@
+# Enable IP forwarding (necessary for NAT to function)
+sysctl -w net.ipv4.ip_forward=1
+
+# List all NAT table rules
+iptables -t nat -L -n -v
+
+# Flush all NAT table rules (reset NAT configuration)
+iptables -t nat -F
+
+# Add IP Masquerading rule to NAT table
+iptables -t nat -A POSTROUTING -o <external_interface> -j MASQUERADE
+
+# Allow forwarding between interfaces (replace with appropriate interfaces)
+iptables -A FORWARD -i <internal_interface> -o <external_interface> -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+# Verify updated NAT rules
+iptables -t nat -L -n -v
+
+# Verify updated forwarding rules
+iptables -L -n -v
+
