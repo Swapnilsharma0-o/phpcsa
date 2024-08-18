@@ -1,5 +1,3 @@
-Certainly! Here’s the updated README with “worked with” in place of “they”:
-
 ---
 
 # PHPCSA: Personal High-Performance Computing Setup Assistant
